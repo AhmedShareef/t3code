@@ -1,4 +1,4 @@
-import type { UsageLimitWindow, UsageProviderKind } from "@t3tools/contracts";
+import type { UsageLimitWindow, UsageLimitsProviderKind } from "@t3tools/contracts";
 import { RefreshCwIcon } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 
@@ -13,11 +13,8 @@ import {
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { PROVIDER_PRESENTATION } from "./usageProviders";
 
-/**
- * Claude leads: it is the only provider reporting limits today, and the page
- * introduces the others as placeholders in this order as support lands.
- */
-const LIMITS_PROVIDER_ORDER: readonly UsageProviderKind[] = ["claude", "codex"];
+/** Display order; providers not yet reporting render as placeholders. */
+const LIMITS_PROVIDER_ORDER: readonly UsageLimitsProviderKind[] = ["claude", "codex", "grok"];
 
 /**
  * The "Limits" half of the usage page: how much of each subscription rate
@@ -158,7 +155,7 @@ function LimitWindowRow({
   window,
   nowMs,
 }: {
-  readonly provider: UsageProviderKind;
+  readonly provider: UsageLimitsProviderKind;
   readonly window: UsageLimitWindow;
   readonly nowMs: number;
 }) {
@@ -209,7 +206,7 @@ function LimitWindowRow({
 }
 
 /** Provider brand color until the window runs hot, then the alert tokens. */
-function utilizationColor(provider: UsageProviderKind, utilization: number): string {
+function utilizationColor(provider: UsageLimitsProviderKind, utilization: number): string {
   if (utilization >= 90) return "var(--color-destructive)";
   if (utilization >= 75) return "var(--color-warning)";
   return PROVIDER_PRESENTATION[provider].color;
@@ -233,7 +230,7 @@ function formatResetsIn(resetsAt: string, nowMs: number): string | null {
   return `in ${minutes}m`;
 }
 
-function UpcomingProviderCard({ provider }: { readonly provider: UsageProviderKind }) {
+function UpcomingProviderCard({ provider }: { readonly provider: UsageLimitsProviderKind }) {
   const Mark = PROVIDER_PRESENTATION[provider].mark;
   return (
     <div className="flex flex-col gap-2 rounded-md border border-dashed border-border p-5">

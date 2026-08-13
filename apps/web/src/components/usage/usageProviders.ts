@@ -1,6 +1,6 @@
-import type { UsageProviderKind } from "@t3tools/contracts";
+import type { UsageLimitsProviderKind, UsageProviderKind } from "@t3tools/contracts";
 
-import { ClaudeAI, type Icon, OpenAI } from "../Icons";
+import { ClaudeAI, GrokIcon, type Icon, OpenAI } from "../Icons";
 
 type UsageProviderPresentation = {
   readonly label: string;
@@ -9,9 +9,11 @@ type UsageProviderPresentation = {
 };
 
 /**
- * Exhaustive presentation for providers supported by the usage contract.
- * Declaration order is reused by every chart, table, legend, and skeleton, so
- * adding a provider only requires its contract support and one entry here.
+ * Exhaustive presentation, keyed by the wider limits union: the Limits view
+ * also presents providers (Grok) that report subscription limits without
+ * having transcript-based usage series. Grok's mark is monochrome and
+ * theme-adaptive, so it follows the foreground token like Codex instead of a
+ * fixed brand hex.
  */
 export const PROVIDER_PRESENTATION = {
   codex: {
@@ -24,7 +26,16 @@ export const PROVIDER_PRESENTATION = {
     color: "#d97757",
     mark: ClaudeAI,
   },
-} satisfies Record<UsageProviderKind, UsageProviderPresentation>;
+  grok: {
+    label: "Grok",
+    color: "var(--foreground)",
+    mark: GrokIcon,
+  },
+} satisfies Record<UsageLimitsProviderKind, UsageProviderPresentation>;
 
-/** The chart layers every series from zero, so order only controls how it is read. */
-export const PROVIDER_ORDER = Object.keys(PROVIDER_PRESENTATION) as UsageProviderKind[];
+/**
+ * Series and table order for the usage view. Only providers with
+ * transcript-based usage series belong here; the chart layers every series
+ * from zero, so order only controls how it is read.
+ */
+export const PROVIDER_ORDER: readonly UsageProviderKind[] = ["codex", "claude"];
