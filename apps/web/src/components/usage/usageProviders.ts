@@ -1,6 +1,6 @@
 import type { UsageLimitsProviderKind, UsageProviderKind } from "@t3tools/contracts";
 
-import { ClaudeAI, GrokIcon, type Icon, OpenAI } from "../Icons";
+import { ClaudeAI, GrokIcon, type Icon, OpenAI, OpenCodeIcon } from "../Icons";
 
 type UsageProviderPresentation = {
   readonly label: string;
@@ -30,6 +30,11 @@ export const PROVIDER_PRESENTATION = {
     label: "Grok",
     color: "var(--foreground)",
     mark: GrokIcon,
+  },
+  opencode: {
+    label: "OpenCode",
+    color: "var(--foreground)",
+    mark: OpenCodeIcon,
   },
 } satisfies Record<UsageLimitsProviderKind, UsageProviderPresentation>;
 
