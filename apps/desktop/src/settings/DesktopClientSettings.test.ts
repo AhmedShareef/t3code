@@ -27,6 +27,7 @@ const clientSettings: ClientSettings = {
   browserAutoShowFloatingPreview: false,
   browserProfiles: [{ id: "work", name: "Work", kind: "persistent" }],
   browserDefaultProfileId: "work",
+  composerSubmitKey: "mod+enter",
   confirmQuit: "double-click",
   confirmThreadArchive: true,
   confirmThreadDelete: false,

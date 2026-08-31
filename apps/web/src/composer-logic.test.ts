@@ -53,59 +53,128 @@ describe("formatAssistantCitationForComposer", () => {
 });
 
 describe("composerSubmissionIntentForEnter", () => {
-  it("submits plain Enter on desktop", () => {
-    expect(
-      composerSubmissionIntentForEnter({
-        isMobileViewport: false,
-        shiftKey: false,
-        modifierKey: false,
-        isDraftThread: true,
-      }),
-    ).toBe("foreground");
+  const desktop = { isMobileViewport: false, shiftKey: false, modifierKey: false };
+
+  describe("with Enter as the submit key", () => {
+    const submitKey = "enter" as const;
+
+    it("submits plain Enter on desktop", () => {
+      expect(composerSubmissionIntentForEnter({ ...desktop, isDraftThread: true, submitKey })).toBe(
+        "foreground",
+      );
+    });
+
+    it("inserts a newline for plain Enter on mobile", () => {
+      expect(
+        composerSubmissionIntentForEnter({
+          ...desktop,
+          isMobileViewport: true,
+          isDraftThread: true,
+          submitKey,
+        }),
+      ).toBeNull();
+    });
+
+    it("inserts a newline for Shift+Enter", () => {
+      expect(
+        composerSubmissionIntentForEnter({
+          ...desktop,
+          shiftKey: true,
+          isDraftThread: true,
+          submitKey,
+        }),
+      ).toBeNull();
+    });
+
+    it("submits a new thread in the background with Mod+Enter", () => {
+      expect(
+        composerSubmissionIntentForEnter({
+          ...desktop,
+          modifierKey: true,
+          isDraftThread: true,
+          submitKey,
+        }),
+      ).toBe("background");
+    });
+
+    it("keeps Mod+Enter in the foreground for an active thread", () => {
+      expect(
+        composerSubmissionIntentForEnter({
+          ...desktop,
+          modifierKey: true,
+          isDraftThread: false,
+          submitKey,
+        }),
+      ).toBe("foreground");
+    });
   });
 
-  it("inserts a newline for plain Enter on mobile", () => {
-    expect(
-      composerSubmissionIntentForEnter({
-        isMobileViewport: true,
-        shiftKey: false,
-        modifierKey: false,
-        isDraftThread: true,
-      }),
-    ).toBeNull();
-  });
+  describe("with Mod+Enter as the submit key", () => {
+    const submitKey = "mod+enter" as const;
 
-  it("inserts a newline for Shift+Enter", () => {
-    expect(
-      composerSubmissionIntentForEnter({
-        isMobileViewport: false,
-        shiftKey: true,
-        modifierKey: false,
-        isDraftThread: true,
-      }),
-    ).toBeNull();
-  });
+    it("inserts a newline for plain Enter", () => {
+      expect(
+        composerSubmissionIntentForEnter({ ...desktop, isDraftThread: true, submitKey }),
+      ).toBeNull();
+    });
 
-  it("submits a new thread in the background with Mod+Enter", () => {
-    expect(
-      composerSubmissionIntentForEnter({
-        isMobileViewport: false,
-        shiftKey: false,
-        modifierKey: true,
-        isDraftThread: true,
-      }),
-    ).toBe("background");
-  });
+    it("inserts a newline for Shift+Enter", () => {
+      expect(
+        composerSubmissionIntentForEnter({
+          ...desktop,
+          shiftKey: true,
+          isDraftThread: true,
+          submitKey,
+        }),
+      ).toBeNull();
+    });
 
-  it("keeps Mod+Enter in the foreground for an active thread", () => {
-    expect(
-      composerSubmissionIntentForEnter({
-        isMobileViewport: false,
-        shiftKey: false,
-        modifierKey: true,
-        isDraftThread: false,
-      }),
-    ).toBe("foreground");
+    it("submits Mod+Enter in the foreground, even for a new thread", () => {
+      expect(
+        composerSubmissionIntentForEnter({
+          ...desktop,
+          modifierKey: true,
+          isDraftThread: true,
+          submitKey,
+        }),
+      ).toBe("foreground");
+    });
+
+    it("submits a new thread in the background with Mod+Shift+Enter", () => {
+      expect(
+        composerSubmissionIntentForEnter({
+          ...desktop,
+          modifierKey: true,
+          shiftKey: true,
+          isDraftThread: true,
+          submitKey,
+        }),
+      ).toBe("background");
+    });
+
+    it("keeps Mod+Shift+Enter in the foreground for an active thread", () => {
+      expect(
+        composerSubmissionIntentForEnter({
+          ...desktop,
+          modifierKey: true,
+          shiftKey: true,
+          isDraftThread: false,
+          submitKey,
+        }),
+      ).toBe("foreground");
+    });
+
+    it("inserts a newline on mobile regardless of modifiers", () => {
+      expect(
+        composerSubmissionIntentForEnter({
+          ...desktop,
+          isMobileViewport: true,
+          modifierKey: true,
+          isDraftThread: true,
+          submitKey,
+        }),
+      ).toBeNull();
+    });
   });
 });
 

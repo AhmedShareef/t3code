@@ -44,6 +44,11 @@ const DEFAULT_TIMESTAMP_FORMAT: TimestampFormat = "locale";
 export const DiffLayout = Schema.Literals(["stacked", "split"]);
 export type DiffLayout = typeof DiffLayout.Type;
 const DEFAULT_DIFF_LAYOUT: DiffLayout = "stacked";
+// Which Enter chord sends a chat message. With "enter", Shift+Enter inserts a
+// newline; with "mod+enter", plain Enter inserts a newline instead.
+export const ComposerSubmitKey = Schema.Literals(["enter", "mod+enter"]);
+export type ComposerSubmitKey = typeof ComposerSubmitKey.Type;
+export const DEFAULT_COMPOSER_SUBMIT_KEY: ComposerSubmitKey = "enter";
 
 export const SidebarProjectSortOrder = Schema.Literals(["updated_at", "created_at", "manual"]);
 export type SidebarProjectSortOrder = typeof SidebarProjectSortOrder.Type;
@@ -327,6 +332,9 @@ export const ClientSettingsSchema = Schema.Struct({
   /** Profile new tabs open under. Falls back to Default if it no longer exists. */
   browserDefaultProfileId: BrowserProfileId.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_BROWSER_PROFILE_ID)),
+  ),
+  composerSubmitKey: ComposerSubmitKey.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_COMPOSER_SUBMIT_KEY)),
   ),
   // Desktop-only. Boolean values from older settings files decode to their
   // equivalent mode and encode back as the canonical string value.
@@ -1335,6 +1343,7 @@ export const ClientSettingsPatch = Schema.Struct({
   browserAutoShowFloatingPreview: Schema.optionalKey(Schema.Boolean),
   browserProfiles: Schema.optionalKey(Schema.Array(BrowserProfile)),
   browserDefaultProfileId: Schema.optionalKey(BrowserProfileId),
+  composerSubmitKey: Schema.optionalKey(ComposerSubmitKey),
   confirmQuit: Schema.optionalKey(QuitConfirmationMode),
   confirmThreadArchive: Schema.optionalKey(Schema.Boolean),
   confirmThreadDelete: Schema.optionalKey(Schema.Boolean),

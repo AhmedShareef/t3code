@@ -23,6 +23,14 @@ T3 Code through another app's system share sheet.
 
 See [images and videos](#images-and-videos-in-messages) for previewing and saving media.
 
+## Choose the send key
+
+On web and desktop, `Enter` sends the message and `Shift+Enter` adds a new line.
+To make `Enter` add a new line instead, set **Settings → General → Send message
+with** to `Cmd+Enter` on macOS or `Ctrl+Enter` on Windows and Linux. That chord
+then sends the message. On mobile, `Enter` always adds a new line; use the send
+button.
+
 ## Queue messages offline on mobile
 
 Mobile keeps local copies of draft attachments, so you can preview them and queue

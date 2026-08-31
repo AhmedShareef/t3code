@@ -1,4 +1,4 @@
-import type { AssistantCitation } from "@t3tools/contracts";
+import type { AssistantCitation, ComposerSubmitKey } from "@t3tools/contracts";
 import {
   serializeAssistantCitation,
   withAssistantCitationComment,
@@ -24,13 +24,31 @@ export function formatAssistantCitationForComposer(citation: AssistantCitation, 
   return `${serializeAssistantCitation(withAssistantCitationComment(citation, comment))} `;
 }
 
+/**
+ * Decides what an Enter keydown in the composer does: send in the foreground,
+ * send a new thread in the background, or `null` to let the editor insert a
+ * newline. `submitKey` is the user's Settings → General choice. With "enter",
+ * Shift+Enter is the newline and Mod+Enter is the background variant. With
+ * "mod+enter", plain Enter is the newline and Mod+Shift+Enter is the
+ * background variant, so both chords stay reachable in either mode.
+ */
 export function composerSubmissionIntentForEnter(input: {
   isMobileViewport: boolean;
   shiftKey: boolean;
   modifierKey: boolean;
   isDraftThread: boolean;
+  submitKey: ComposerSubmitKey;
 }): ComposerSubmissionIntent | null {
-  if (input.isMobileViewport || input.shiftKey) {
+  if (input.isMobileViewport) {
+    return null;
+  }
+  if (input.submitKey === "mod+enter") {
+    if (!input.modifierKey) {
+      return null;
+    }
+    return input.shiftKey && input.isDraftThread ? "background" : "foreground";
+  }
+  if (input.shiftKey) {
     return null;
   }
   return input.modifierKey && input.isDraftThread ? "background" : "foreground";
