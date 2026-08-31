@@ -16,8 +16,10 @@ if that project exists there. Otherwise it selects an environment that has it.
 ### Start in the background
 
 In a desktop browser or the desktop app, press `Cmd+Enter` on macOS or `Ctrl+Enter`
-on Windows and Linux to start a new thread and immediately open another draft. The
-next draft keeps the workspace mode and base branch you selected. With **New
+on Windows and Linux to start a new thread and immediately open another draft. If
+**Send message with** is set to that chord, add `Shift` (`Cmd+Shift+Enter` or
+`Ctrl+Shift+Enter`) instead. The next draft keeps the workspace mode and base
+branch you selected. With **New
 worktree**, each background submission creates its own worktree.
 
 ## Pin and reorder threads

@@ -6,6 +6,7 @@ import type { CSSProperties, ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   type BackgroundActivityProfile,
+  type ComposerSubmitKey,
   type DesktopUpdateChannel,
   ProviderDriverKind,
   type ProviderInstanceId,
@@ -205,6 +206,14 @@ const QUIT_CONFIRMATION_MODE_LABELS: Record<QuitConfirmationMode, string> = {
   hold: "Hold",
   "double-click": "Double press",
 };
+
+// Mirrors formatShortcutLabel so the choice reads the same as the Keybindings page.
+function composerSubmitKeyLabels(): Record<ComposerSubmitKey, string> {
+  return {
+    enter: "Enter",
+    "mod+enter": isMacPlatform(navigator.platform) ? "\u2318Enter" : "Ctrl+Enter",
+  };
+}
 
 const BACKGROUND_ACTIVITY_PROFILE_LABELS: Record<BackgroundActivityProfile, string> = {
   balanced: "Balanced",
@@ -2586,6 +2595,49 @@ export function GeneralSettingsPanel() {
               }
               aria-label="Collapse composer on scroll"
             />
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("send-message-key")}
+          description={
+            settings.composerSubmitKey === "mod+enter"
+              ? "Enter adds a new line."
+              : "Shift+Enter adds a new line."
+          }
+          resetAction={
+            settings.composerSubmitKey !== DEFAULT_UNIFIED_SETTINGS.composerSubmitKey ? (
+              <SettingResetButton
+                label="send message key"
+                onClick={() =>
+                  updateSettings({
+                    composerSubmitKey: DEFAULT_UNIFIED_SETTINGS.composerSubmitKey,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={settings.composerSubmitKey}
+              onValueChange={(value) => {
+                if (value === "enter" || value === "mod+enter") {
+                  updateSettings({ composerSubmitKey: value });
+                }
+              }}
+            >
+              <SelectTrigger className="w-full sm:w-40" aria-label="Send message with">
+                <SelectValue>{composerSubmitKeyLabels()[settings.composerSubmitKey]}</SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                <SelectItem hideIndicator value="enter">
+                  {composerSubmitKeyLabels().enter}
+                </SelectItem>
+                <SelectItem hideIndicator value="mod+enter">
+                  {composerSubmitKeyLabels()["mod+enter"]}
+                </SelectItem>
+              </SelectPopup>
+            </Select>
           }
         />
 

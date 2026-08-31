@@ -3783,9 +3783,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       shiftKey: false,
       modifierKey: true,
       isDraftThread: routeKind === "draft",
+      submitKey: settings.composerSubmitKey,
     });
     submitComposer(undefined, intent ?? "foreground");
-  }, [isMobileViewport, routeKind, submitComposer]);
+  }, [isMobileViewport, routeKind, settings.composerSubmitKey, submitComposer]);
   const compactThreadContext = useCallback(() => {
     if (
       compactDisabled ||
@@ -3953,6 +3954,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             shiftKey: event.shiftKey,
             modifierKey: event.metaKey || event.ctrlKey,
             isDraftThread: routeKind === "draft",
+            submitKey: settings.composerSubmitKey,
           })
         : null;
     if (submissionIntent) {

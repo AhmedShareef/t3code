@@ -37,6 +37,14 @@ call, or when the turn ends. Use the arrow under the bubble to send it right
 away, or the X to move it back into the composer. Stop returns every queued
 message to the composer.
 
+## Choose the send key
+
+On web and desktop, `Enter` sends the message and `Shift+Enter` adds a new line.
+To make `Enter` add a new line instead, set **Settings → General → Send message
+with** to `Cmd+Enter` on macOS or `Ctrl+Enter` on Windows and Linux. That chord
+then sends the message. On mobile, `Enter` always adds a new line; use the send
+button.
+
 ## Queue messages offline on mobile
 
 Mobile keeps local copies of draft attachments, so you can preview them and queue
