@@ -153,6 +153,59 @@ describe("collectLimitsGroups", () => {
       "Desktop",
     ]);
   });
+
+  it("shows a sign-in reached from two environments once, on the freshest snapshot", () => {
+    const email = "person@example.com";
+    const stale = provider({
+      auth: { status: "authenticated", email: " Person@Example.COM " },
+      usageLimits: { checkedAt: "2026-09-03T10:00:00.000Z", windows: [window] },
+    });
+    const fresh = provider({
+      auth: { status: "authenticated", email },
+      usageLimits: { checkedAt: "2026-09-03T11:30:00.000Z", windows: [window] },
+    });
+    const failed = provider({
+      auth: { status: "authenticated", email },
+      usageLimits: {
+        checkedAt: "2026-09-03T11:45:00.000Z",
+        windows: [],
+        unavailable: { reason: "probeFailed" },
+      },
+    });
+    const other = provider({
+      instanceId: ProviderInstanceId.make("work"),
+      auth: { status: "authenticated", email: "work@example.com" },
+      usageLimits: { checkedAt: "2026-09-03T11:00:00.000Z", windows: [window] },
+    });
+    const presentations = new Map([
+      [
+        "env-a",
+        { entry: { target: { label: "Laptop" } }, serverConfig: { providers: [stale, other] } },
+      ],
+      ["env-b", { entry: { target: { label: "Desktop" } }, serverConfig: { providers: [fresh] } }],
+      ["env-c", { entry: { target: { label: "Server" } }, serverConfig: { providers: [failed] } }],
+    ] as const);
+
+    const groups = collectLimitsGroups(presentations as never);
+    expect(groups.map((group) => [group.environmentLabel, group.providers])).toEqual([
+      ["Laptop", [other]],
+      ["Desktop", [fresh]],
+    ]);
+  });
+
+  it("drops the environment label once deduplication leaves a single environment", () => {
+    const shared = provider({
+      auth: { status: "authenticated", email: "person@example.com" },
+      usageLimits: { checkedAt: "2026-09-03T11:00:00.000Z", windows: [window] },
+    });
+    const presentations = new Map([
+      ["env-a", { entry: { target: { label: "Laptop" } }, serverConfig: { providers: [shared] } }],
+      ["env-b", { entry: { target: { label: "Desktop" } }, serverConfig: { providers: [shared] } }],
+    ] as const);
+    expect(collectLimitsGroups(presentations as never)).toEqual([
+      { environmentId: "env-a", environmentLabel: null, providers: [shared] },
+    ]);
+  });
 });
 
 describe("collectLimitSources", () => {
@@ -202,7 +255,8 @@ describe("collectLimitSources", () => {
       const input = presentations([first, second], accounts);
 
       expect(collectLimitSources(input)).toMatchObject([{ accounts: [], hiddenAccountCount: 1 }]);
-      expect(collectLimitsGroups(input)[0]?.providers).toEqual([first, second]);
+      // Two instances on one sign-in share one quota, so one row.
+      expect(collectLimitsGroups(input)[0]?.providers).toEqual([first]);
       expect(accounts).toHaveLength(1);
       expect(first.usageLimits?.resetCredits?.availableCount).toBe(2);
     },

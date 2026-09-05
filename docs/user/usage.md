@@ -54,6 +54,9 @@ the bar show each account's quota, countdown, and credits. Tap a row to open its
 The same account signed in on more than one environment, or reported by a hub as well, counts once.
 Filter with the environment dropdown to see what a single machine has.
 
+Limits belong to the account, not the machine. A sign-in used on several connected environments
+shows once, with the most recently checked figures.
+
 If a window looks stale, refresh Limits to re-check every provider and hub.
 
 Pick `/usage-limits` from the composer's command menu, or send it as a message, to check the

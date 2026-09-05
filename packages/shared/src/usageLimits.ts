@@ -44,15 +44,43 @@ export function providersWithLimits(
 
 export interface LimitsGroup {
   readonly environmentId: EnvironmentId;
-  /** Null while only one environment is connected; there is nothing to tell apart. */
+  /** Null while only one environment shows rows; there is nothing to tell apart. */
   readonly environmentLabel: string | null;
   readonly providers: readonly ServerProvider[];
+}
+
+interface LimitsCandidate {
+  readonly environmentId: EnvironmentId;
+  readonly environmentLabel: string;
+  readonly provider: ServerProvider;
+}
+
+/** Bars to draw, as opposed to a probe that failed or an account that cannot have any. */
+function hasUsableLimits(provider: ServerProvider): boolean {
+  return Boolean(provider.usageLimits?.windows.length) && !provider.usageLimits?.unavailable;
+}
+
+/**
+ * Whether `next` should replace `current` as the row for a shared account:
+ * bars beat no bars, then the more recent read wins, since a turn on either
+ * machine moves the same quota.
+ */
+function isFresherLimits(next: ServerProvider, current: ServerProvider): boolean {
+  const nextUsable = hasUsableLimits(next);
+  const currentUsable = hasUsableLimits(current);
+  if (nextUsable !== currentUsable) return nextUsable;
+  return (next.usageLimits?.checkedAt ?? "") > (current.usageLimits?.checkedAt ?? "");
 }
 
 /**
  * One group per connected environment with a provider reporting limits.
  * Provider snapshots come from the config stream every client already holds,
  * so opening the view costs no extra request.
+ *
+ * A subscription belongs to an account, not a machine: the same sign-in
+ * reached through two environments (or two instances) shows once, on the
+ * environment whose snapshot is freshest. Accounts without an email cannot
+ * be matched and keep a row per instance.
  */
 export function collectLimitsGroups(
   presentations: ReadonlyMap<
@@ -65,13 +93,42 @@ export function collectLimitsGroups(
     }
   >,
 ): readonly LimitsGroup[] {
-  const groups: LimitsGroup[] = [];
+  const candidates: LimitsCandidate[] = [];
   for (const [environmentId, presentation] of presentations) {
-    const providers = providersWithLimits(presentation.serverConfig?.providers ?? []);
-    if (providers.length === 0) continue;
-    groups.push({ environmentId, environmentLabel: presentation.entry.target.label, providers });
+    for (const provider of providersWithLimits(presentation.serverConfig?.providers ?? [])) {
+      candidates.push({
+        environmentId,
+        environmentLabel: presentation.entry.target.label,
+        provider,
+      });
+    }
   }
-  return groups.length > 1 ? groups : groups.map((group) => ({ ...group, environmentLabel: null }));
+  const rowByAccount = new Map<string, LimitsCandidate>();
+  for (const candidate of candidates) {
+    const key = accountKey(candidate.provider.driver, candidate.provider.auth.email);
+    if (key === null) continue;
+    const current = rowByAccount.get(key);
+    if (current === undefined || isFresherLimits(candidate.provider, current.provider)) {
+      rowByAccount.set(key, candidate);
+    }
+  }
+  const groups = new Map<EnvironmentId, { label: string; providers: ServerProvider[] }>();
+  for (const candidate of candidates) {
+    const key = accountKey(candidate.provider.driver, candidate.provider.auth.email);
+    if (key !== null && rowByAccount.get(key) !== candidate) continue;
+    const group = groups.get(candidate.environmentId) ?? {
+      label: candidate.environmentLabel,
+      providers: [],
+    };
+    group.providers.push(candidate.provider);
+    groups.set(candidate.environmentId, group);
+  }
+  const labelEnvironment = groups.size > 1;
+  return [...groups].map(([environmentId, group]) => ({
+    environmentId,
+    environmentLabel: labelEnvironment ? group.label : null,
+    providers: group.providers,
+  }));
 }
 
 /**
