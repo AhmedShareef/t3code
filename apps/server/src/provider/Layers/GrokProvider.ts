@@ -12,7 +12,9 @@ import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Result from "effect/Result";
 import { HttpClient } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
@@ -41,6 +43,8 @@ import {
 } from "../acp/GrokAcpSupport.ts";
 import { sessionModelStateFromInitialize } from "../acp/AcpRuntimeModel.ts";
 import { discoverGrokSkills } from "../Drivers/GrokSkills.ts";
+import { makeUnavailableUsageLimits } from "../providerUsageLimits.ts";
+import { readGrokUsageLimits } from "./grokUsageLimits.ts";
 
 const GROK_PRESENTATION = {
   displayName: "Grok",
@@ -334,7 +338,11 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
 ): Effect.fn.Return<
   ServerProviderDraft,
   never,
-  ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto
+  | ChildProcessSpawner.ChildProcessSpawner
+  | Crypto.Crypto
+  | FileSystem.FileSystem
+  | HttpClient.HttpClient
+  | Path.Path
 > {
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
   const fallbackModels = grokModelsFromSettings(grokSettings.customModels);
@@ -495,6 +503,19 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
     });
   }
 
+  // Subscription windows belong to the grok.com sign-in; an API key is billed
+  // per token and has none. The read also names the account, which is what
+  // lets the Limits view match this sign-in across environments.
+  const usage =
+    auth.type === "api_key"
+      ? { limits: makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" }) }
+      : yield* readGrokUsageLimits({ environment, checkedAt });
+  const accountAuth: ServerProviderAuth = {
+    ...auth,
+    ...("plan" in usage && usage.plan ? { label: usage.plan } : {}),
+    ...("email" in usage && usage.email ? { email: usage.email } : {}),
+  };
+
   return buildServerProvider({
     presentation: GROK_PRESENTATION,
     enabled: grokSettings.enabled,
@@ -507,13 +528,14 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
       version,
       // A failed metadata probe degrades the model picker, it does not make chats fail.
       status: acpFailed ? "warning" : "ready",
-      auth,
+      auth: accountAuth,
       ...(acpFailed
         ? {
             message:
               "Grok CLI is installed but ACP initialize failed. Model options may be incomplete.",
           }
         : {}),
+      usageLimits: usage.limits,
     },
   });
 });

@@ -6,7 +6,10 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import { GrokSettings } from "@t3tools/contracts";
 
 import {
@@ -36,6 +39,20 @@ const LOGGED_OUT_MODELS_OUTPUT = LOGGED_IN_MODELS_OUTPUT.replace(
   "You are logged in with grok.com.",
   "You are not authenticated.",
 );
+
+/** Stands in for the Grok CLI backend; tests swap the responder per case. */
+const httpMock = {
+  respond: (_url: string): Response => Response.json({}, { status: 404 }),
+};
+const TestHttpClientLive = Layer.succeed(
+  HttpClient.HttpClient,
+  HttpClient.make((request) =>
+    Effect.succeed(HttpClientResponse.fromWeb(request, httpMock.respond(request.url))),
+  ),
+);
+
+/** Keeps the probe away from the developer's real `~/.grok` sign-in. */
+const NO_GROK_HOME = { GROK_HOME: "/definitely/not/a/grok/home" } as const;
 
 describe("parseGrokModelsCliOutput", () => {
   it("reads login state and model slugs, marking the default", () => {
@@ -286,181 +303,291 @@ describe("buildInitialGrokProviderSnapshot", () => {
   );
 });
 
-it.layer(NodeServices.layer)("checkGrokProviderStatus", (it) => {
-  it.effect("reports the binary as missing when the binary path does not resolve", () =>
-    Effect.gen(function* () {
-      const snapshot = yield* checkGrokProviderStatus(
-        decodeGrokSettings({
-          enabled: true,
-          binaryPath: "/definitely/not/installed/grok-binary",
-        }),
-      );
-      expect(snapshot.enabled).toBe(true);
-      expect(snapshot.installed).toBe(false);
-      expect(snapshot.status).toBe("error");
-      expect(snapshot.message).toMatch(/not installed|not on PATH|Failed to execute/);
-    }),
-  );
+it.layer(Layer.mergeAll(NodeServices.layer, TestHttpClientLive))(
+  "checkGrokProviderStatus",
+  (it) => {
+    it.effect("reports the binary as missing when the binary path does not resolve", () =>
+      Effect.gen(function* () {
+        const snapshot = yield* checkGrokProviderStatus(
+          decodeGrokSettings({
+            enabled: true,
+            binaryPath: "/definitely/not/installed/grok-binary",
+          }),
+        );
+        expect(snapshot.enabled).toBe(true);
+        expect(snapshot.installed).toBe(false);
+        expect(snapshot.status).toBe("error");
+        expect(snapshot.message).toMatch(/not installed|not on PATH|Failed to execute/);
+      }),
+    );
 
-  it.effect("reports an installed CLI as unhealthy when --version exits non-zero", () =>
-    Effect.gen(function* () {
-      const secretStderr = "broken grok install: secret-token-value";
-      const snapshot = yield* Effect.scoped(
-        Effect.gen(function* () {
-          const fs = yield* FileSystem.FileSystem;
-          const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-grok-version-" });
-          const grokPath = writeFakeCli({
-            directory: dir,
-            name: "grok",
-            source: [
+    it.effect("reports an installed CLI as unhealthy when --version exits non-zero", () =>
+      Effect.gen(function* () {
+        const secretStderr = "broken grok install: secret-token-value";
+        const snapshot = yield* Effect.scoped(
+          Effect.gen(function* () {
+            const fs = yield* FileSystem.FileSystem;
+            const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-grok-version-" });
+            const grokPath = writeFakeCli({
+              directory: dir,
+              name: "grok",
+              source: [
+                // @effect-diagnostics-next-line preferSchemaOverJson:off
+                `process.stderr.write(${JSON.stringify(`${secretStderr}\n`)});`,
+                "process.exit(2);",
+                "",
+              ].join("\n"),
+            });
+
+            return yield* checkGrokProviderStatus(
+              decodeGrokSettings({ enabled: true, binaryPath: grokPath }),
+            );
+          }),
+        );
+
+        expect(snapshot.enabled).toBe(true);
+        expect(snapshot.installed).toBe(true);
+        expect(snapshot.status).toBe("error");
+        expect(snapshot.message).toBe("Grok CLI is installed but failed to run.");
+        expect(snapshot.message).not.toContain(secretStderr);
+      }),
+    );
+
+    // A stand-in for the Grok CLI: `--version` and `models` print canned text,
+    // and `agent stdio` execs the mock ACP agent so `initialize` returns model metadata.
+    const writeFakeGrokCli = (input: { readonly modelsOutput: string; readonly acp: boolean }) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-grok-probe-" });
+        const mockAgentPath = NodePath.resolve(__dirname, "../../../scripts/acp-mock-agent.ts");
+        return writeFakeCli({
+          directory: dir,
+          name: "grok",
+          source: [
+            'if (process.argv[2] === "--version") {',
+            '  process.stdout.write("grok 1.0.13\\n");',
+            "  process.exit(0);",
+            "}",
+            'if (process.argv[2] === "models") {',
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            `  process.stdout.write(${JSON.stringify(input.modelsOutput)});`,
+            "  process.exit(0);",
+            "}",
+            'if (process.argv[2] !== "agent") process.exit(1);',
+            ...(input.acp
+              ? [execScriptSource({ scriptPath: mockAgentPath })]
+              : ["process.exit(3);"]),
+            "",
+          ].join("\n"),
+        });
+      });
+
+    it.effect("reports ready with ACP-discovered models when logged in", () =>
+      Effect.gen(function* () {
+        const snapshot = yield* Effect.scoped(
+          Effect.gen(function* () {
+            const grokPath = yield* writeFakeGrokCli({
+              modelsOutput: LOGGED_IN_MODELS_OUTPUT,
+              acp: true,
+            });
+            return yield* checkGrokProviderStatus(
+              decodeGrokSettings({ enabled: true, binaryPath: grokPath }),
+              { ...process.env, ...NO_GROK_HOME, XAI_API_KEY: "" },
+            );
+          }),
+        );
+
+        expect(snapshot.status).toBe("ready");
+        expect(snapshot.version).toBe("1.0.13");
+        expect(snapshot.auth).toEqual({
+          status: "authenticated",
+          type: "cached_token",
+          label: "Grok account",
+        });
+        // The mock agent advertises grok-4.6 with reasoning options in initialize._meta.
+        expect(snapshot.models.map((model) => model.slug)).toEqual(["grok-4.6", "grok-mock-alt"]);
+        expect(snapshot.models[0]?.isDefault).toBe(true);
+        expect(
+          snapshot.models[0]?.capabilities?.optionDescriptors?.map((option) => option.id) ?? [],
+        ).toEqual(["reasoningEffort"]);
+      }),
+    );
+
+    it.effect("reports unauthenticated from `grok models` without starting a session", () =>
+      Effect.gen(function* () {
+        const snapshot = yield* Effect.scoped(
+          Effect.gen(function* () {
+            const grokPath = yield* writeFakeGrokCli({
+              modelsOutput: LOGGED_OUT_MODELS_OUTPUT,
+              acp: true,
+            });
+            return yield* checkGrokProviderStatus(
+              decodeGrokSettings({ enabled: true, binaryPath: grokPath }),
+              { ...process.env, ...NO_GROK_HOME, XAI_API_KEY: "" },
+            );
+          }),
+        );
+
+        expect(snapshot.status).toBe("error");
+        expect(snapshot.auth.status).toBe("unauthenticated");
+        expect(snapshot.message).toContain("grok login");
+        expect(snapshot.models.map((model) => model.slug)).toEqual(["grok-4.6", "grok-mock-alt"]);
+      }),
+    );
+
+    it.effect("falls back to CLI-listed models with a warning when ACP initialize fails", () =>
+      Effect.gen(function* () {
+        const snapshot = yield* Effect.scoped(
+          Effect.gen(function* () {
+            const grokPath = yield* writeFakeGrokCli({
+              modelsOutput: LOGGED_IN_MODELS_OUTPUT,
+              acp: false,
+            });
+            return yield* checkGrokProviderStatus(
+              decodeGrokSettings({ enabled: true, binaryPath: grokPath }),
+              { ...process.env, ...NO_GROK_HOME, XAI_API_KEY: "" },
+            );
+          }),
+        );
+
+        expect(snapshot.status).toBe("warning");
+        expect(snapshot.installed).toBe(true);
+        expect(snapshot.auth.status).toBe("authenticated");
+        expect(snapshot.models.map((model) => [model.slug, model.isDefault ?? false])).toEqual([
+          ["grok-4.6", true],
+          ["grok-4.5", false],
+        ]);
+        expect(snapshot.message).toContain("ACP initialize failed");
+      }),
+    );
+
+    it.effect("treats XAI_API_KEY as authenticated regardless of CLI login state", () =>
+      Effect.gen(function* () {
+        const snapshot = yield* Effect.scoped(
+          Effect.gen(function* () {
+            const grokPath = yield* writeFakeGrokCli({
+              modelsOutput: LOGGED_OUT_MODELS_OUTPUT,
+              acp: false,
+            });
+            return yield* checkGrokProviderStatus(
+              decodeGrokSettings({ enabled: true, binaryPath: grokPath }),
+              { ...process.env, ...NO_GROK_HOME, XAI_API_KEY: "xai-test-key" },
+            );
+          }),
+        );
+
+        expect(snapshot.auth).toEqual({
+          status: "authenticated",
+          type: "api_key",
+          label: "xAI API key",
+        });
+        expect(snapshot.status).toBe("warning");
+        expect(snapshot.usageLimits?.unavailable?.reason).toBe("unsupported");
+      }),
+    );
+
+    it.effect("keeps the last good bars when the sign-in file is missing", () =>
+      Effect.gen(function* () {
+        const snapshot = yield* Effect.scoped(
+          Effect.gen(function* () {
+            const grokPath = yield* writeFakeGrokCli({
+              modelsOutput: LOGGED_IN_MODELS_OUTPUT,
+              acp: false,
+            });
+            return yield* checkGrokProviderStatus(
+              decodeGrokSettings({ enabled: true, binaryPath: grokPath }),
+              { ...process.env, ...NO_GROK_HOME, XAI_API_KEY: "" },
+            );
+          }),
+        );
+
+        expect(snapshot.usageLimits?.unavailable).toEqual({
+          reason: "probeFailed",
+          message: "Could not find the Grok CLI sign-in on this environment.",
+        });
+        expect(snapshot.auth.email).toBeUndefined();
+      }),
+    );
+
+    it.effect("reads credit windows and the account from the CLI's sign-in", () =>
+      Effect.gen(function* () {
+        const seen: string[] = [];
+        httpMock.respond = (url) => {
+          seen.push(url);
+          if (url.endsWith("/user?include=subscription")) {
+            return Response.json({ email: "person@example.com", subscriptionTier: "SuperGrok" });
+          }
+          if (url.endsWith("/billing?format=credits")) {
+            return Response.json({
+              config: {
+                currentPeriod: {
+                  type: "USAGE_PERIOD_TYPE_WEEKLY",
+                  start: "2026-08-10T03:52:10.269564+00:00",
+                  end: "2026-08-17T03:52:10.269564+00:00",
+                },
+                creditUsagePercent: 60,
+                productUsage: [{ product: "GrokBuild", usagePercent: 57 }],
+              },
+            });
+          }
+          return Response.json({}, { status: 404 });
+        };
+        const snapshot = yield* Effect.scoped(
+          Effect.gen(function* () {
+            const fs = yield* FileSystem.FileSystem;
+            const path = yield* Path.Path;
+            const grokHome = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-grok-home-" });
+            yield* fs.writeFileString(
+              path.join(grokHome, "auth.json"),
               // @effect-diagnostics-next-line preferSchemaOverJson:off
-              `process.stderr.write(${JSON.stringify(`${secretStderr}\n`)});`,
-              "process.exit(2);",
-              "",
-            ].join("\n"),
-          });
+              JSON.stringify({
+                "https://auth.x.ai::client": { key: "bearer", auth_mode: "oidc" },
+              }),
+            );
+            yield* fs.writeFileString(
+              path.join(grokHome, "models_cache.json"),
+              // @effect-diagnostics-next-line preferSchemaOverJson:off
+              JSON.stringify({ origin: "https://team-proxy.example/v1/models" }),
+            );
+            const grokPath = yield* writeFakeGrokCli({
+              modelsOutput: LOGGED_IN_MODELS_OUTPUT,
+              acp: false,
+            });
+            return yield* checkGrokProviderStatus(
+              decodeGrokSettings({ enabled: true, binaryPath: grokPath }),
+              { ...process.env, GROK_HOME: grokHome, XAI_API_KEY: "" },
+            );
+          }),
+        );
 
-          return yield* checkGrokProviderStatus(
-            decodeGrokSettings({ enabled: true, binaryPath: grokPath }),
-          );
-        }),
-      );
-
-      expect(snapshot.enabled).toBe(true);
-      expect(snapshot.installed).toBe(true);
-      expect(snapshot.status).toBe("error");
-      expect(snapshot.message).toBe("Grok CLI is installed but failed to run.");
-      expect(snapshot.message).not.toContain(secretStderr);
-    }),
-  );
-
-  // A stand-in for the Grok CLI: `--version` and `models` print canned text,
-  // and `agent stdio` execs the mock ACP agent so `initialize` returns model metadata.
-  const writeFakeGrokCli = (input: { readonly modelsOutput: string; readonly acp: boolean }) =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-grok-probe-" });
-      const mockAgentPath = NodePath.resolve(__dirname, "../../../scripts/acp-mock-agent.ts");
-      return writeFakeCli({
-        directory: dir,
-        name: "grok",
-        source: [
-          'if (process.argv[2] === "--version") {',
-          '  process.stdout.write("grok 1.0.13\\n");',
-          "  process.exit(0);",
-          "}",
-          'if (process.argv[2] === "models") {',
-          // @effect-diagnostics-next-line preferSchemaOverJson:off
-          `  process.stdout.write(${JSON.stringify(input.modelsOutput)});`,
-          "  process.exit(0);",
-          "}",
-          'if (process.argv[2] !== "agent") process.exit(1);',
-          ...(input.acp ? [execScriptSource({ scriptPath: mockAgentPath })] : ["process.exit(3);"]),
-          "",
-        ].join("\n"),
-      });
-    });
-
-  it.effect("reports ready with ACP-discovered models when logged in", () =>
-    Effect.gen(function* () {
-      const snapshot = yield* Effect.scoped(
-        Effect.gen(function* () {
-          const grokPath = yield* writeFakeGrokCli({
-            modelsOutput: LOGGED_IN_MODELS_OUTPUT,
-            acp: true,
-          });
-          return yield* checkGrokProviderStatus(
-            decodeGrokSettings({ enabled: true, binaryPath: grokPath }),
-            { ...process.env, XAI_API_KEY: "" },
-          );
-        }),
-      );
-
-      expect(snapshot.status).toBe("ready");
-      expect(snapshot.version).toBe("1.0.13");
-      expect(snapshot.auth).toEqual({
-        status: "authenticated",
-        type: "cached_token",
-        label: "Grok account",
-      });
-      // The mock agent advertises grok-4.6 with reasoning options in initialize._meta.
-      expect(snapshot.models.map((model) => model.slug)).toEqual(["grok-4.6", "grok-mock-alt"]);
-      expect(snapshot.models[0]?.isDefault).toBe(true);
-      expect(
-        snapshot.models[0]?.capabilities?.optionDescriptors?.map((option) => option.id) ?? [],
-      ).toEqual(["reasoningEffort"]);
-    }),
-  );
-
-  it.effect("reports unauthenticated from `grok models` without starting a session", () =>
-    Effect.gen(function* () {
-      const snapshot = yield* Effect.scoped(
-        Effect.gen(function* () {
-          const grokPath = yield* writeFakeGrokCli({
-            modelsOutput: LOGGED_OUT_MODELS_OUTPUT,
-            acp: true,
-          });
-          return yield* checkGrokProviderStatus(
-            decodeGrokSettings({ enabled: true, binaryPath: grokPath }),
-            { ...process.env, XAI_API_KEY: "" },
-          );
-        }),
-      );
-
-      expect(snapshot.status).toBe("error");
-      expect(snapshot.auth.status).toBe("unauthenticated");
-      expect(snapshot.message).toContain("grok login");
-      expect(snapshot.models.map((model) => model.slug)).toEqual(["grok-4.6", "grok-mock-alt"]);
-    }),
-  );
-
-  it.effect("falls back to CLI-listed models with a warning when ACP initialize fails", () =>
-    Effect.gen(function* () {
-      const snapshot = yield* Effect.scoped(
-        Effect.gen(function* () {
-          const grokPath = yield* writeFakeGrokCli({
-            modelsOutput: LOGGED_IN_MODELS_OUTPUT,
-            acp: false,
-          });
-          return yield* checkGrokProviderStatus(
-            decodeGrokSettings({ enabled: true, binaryPath: grokPath }),
-            { ...process.env, XAI_API_KEY: "" },
-          );
-        }),
-      );
-
-      expect(snapshot.status).toBe("warning");
-      expect(snapshot.installed).toBe(true);
-      expect(snapshot.auth.status).toBe("authenticated");
-      expect(snapshot.models.map((model) => [model.slug, model.isDefault ?? false])).toEqual([
-        ["grok-4.6", true],
-        ["grok-4.5", false],
-      ]);
-      expect(snapshot.message).toContain("ACP initialize failed");
-    }),
-  );
-
-  it.effect("treats XAI_API_KEY as authenticated regardless of CLI login state", () =>
-    Effect.gen(function* () {
-      const snapshot = yield* Effect.scoped(
-        Effect.gen(function* () {
-          const grokPath = yield* writeFakeGrokCli({
-            modelsOutput: LOGGED_OUT_MODELS_OUTPUT,
-            acp: false,
-          });
-          return yield* checkGrokProviderStatus(
-            decodeGrokSettings({ enabled: true, binaryPath: grokPath }),
-            { ...process.env, XAI_API_KEY: "xai-test-key" },
-          );
-        }),
-      );
-
-      expect(snapshot.auth).toEqual({
-        status: "authenticated",
-        type: "api_key",
-        label: "xAI API key",
-      });
-      expect(snapshot.status).toBe("warning");
-    }),
-  );
-});
+        // The bearer went to the proxy the CLI cached, never the public default.
+        expect(seen.every((url) => url.startsWith("https://team-proxy.example/v1/"))).toBe(true);
+        expect(snapshot.auth).toEqual({
+          status: "authenticated",
+          type: "cached_token",
+          label: "SuperGrok",
+          email: "person@example.com",
+        });
+        expect(snapshot.usageLimits?.unavailable).toBeUndefined();
+        expect(snapshot.usageLimits?.windows).toEqual([
+          {
+            id: "credits",
+            kind: "weekly",
+            label: "Weekly",
+            windowDurationMins: 10_080,
+            usedPercent: 60,
+            resetsAt: "2026-08-17T03:52:10.269Z",
+          },
+          {
+            id: "credits:GrokBuild",
+            kind: "weekly",
+            label: "Weekly · Grok Build",
+            windowDurationMins: 10_080,
+            usedPercent: 57,
+            resetsAt: "2026-08-17T03:52:10.269Z",
+          },
+        ]);
+      }),
+    );
+  },
+);
