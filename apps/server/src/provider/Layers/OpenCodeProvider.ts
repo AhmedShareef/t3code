@@ -8,6 +8,9 @@ import * as Cause from "effect/Cause";
 import * as Data from "effect/Data";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
+import { HttpClient } from "effect/unstable/http";
 
 import { createModelCapabilities } from "@t3tools/shared/model";
 import { compareSemverVersions } from "@t3tools/shared/semver";
@@ -27,6 +30,10 @@ import {
 } from "../opencodeRuntime.ts";
 import type { Agent, ProviderListResponse } from "@opencode-ai/sdk/v2";
 import * as OpenCodeServerOwner from "../OpenCodeServerOwner.ts";
+import { readOpenCodeUsageLimits } from "./opencodeUsageLimits.ts";
+
+/** OpenCode's own gateway, the one provider id whose sign-in carries Zen subscription windows. */
+const OPENCODE_ZEN_PROVIDER_ID = "opencode";
 
 const OPENCODE_PRESENTATION = {
   displayName: "OpenCode",
@@ -367,7 +374,11 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
 ): Effect.fn.Return<
   ServerProviderDraft,
   never,
-  OpenCodeRuntime | OpenCodeServerOwner.OpenCodeServerOwner
+  | FileSystem.FileSystem
+  | HttpClient.HttpClient
+  | OpenCodeRuntime
+  | OpenCodeServerOwner.OpenCodeServerOwner
+  | Path.Path
 > {
   const openCodeRuntime = yield* OpenCodeRuntime;
   const serverOwner = yield* OpenCodeServerOwner.OpenCodeServerOwner;
@@ -519,7 +530,15 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
     DEFAULT_OPENCODE_MODEL_CAPABILITIES,
   );
   const skills = openCodeSkillsToServerProviderSkills(inventoryExit.value.inventory.skills);
-  const connectedCount = inventoryExit.value.inventory.providerList.connected.length;
+  const connected = inventoryExit.value.inventory.providerList.connected;
+  const connectedCount = connected.length;
+  // Zen windows belong to the key on this machine, so only a local server
+  // that actually has Zen connected is asked; a configured remote server's
+  // sign-in is not ours to read.
+  const usageLimits =
+    !isExternalServer && connected.includes(OPENCODE_ZEN_PROVIDER_ID)
+      ? yield* readOpenCodeUsageLimits({ environment: resolvedEnvironment, checkedAt })
+      : undefined;
   return buildServerProvider({
     presentation: OPENCODE_PRESENTATION,
     enabled: true,
@@ -541,6 +560,7 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
           : isExternalServer
             ? "Connected to the configured OpenCode server, but it did not report any connected upstream providers."
             : "OpenCode is available, but it did not report any connected upstream providers.",
+      ...(usageLimits ? { usageLimits } : {}),
     },
   });
 });
