@@ -9,6 +9,7 @@ const DRIVER_LABEL: Partial<Record<string, string>> = {
   codex: "Codex",
   claudeAgent: "Claude",
   grok: "Grok",
+  opencode: "OpenCode",
 };
 
 /**

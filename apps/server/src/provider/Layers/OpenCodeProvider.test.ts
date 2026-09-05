@@ -7,6 +7,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
+import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import { beforeEach } from "vite-plus/test";
 
 import { OpenCodeSettings } from "@t3tools/contracts";
@@ -161,11 +162,27 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
 
 beforeEach(() => {
   runtimeMock.reset();
+  httpMock.calls = 0;
+  httpMock.respond = () => Response.json({}, { status: 404 });
 });
+
+/** Stands in for the Zen usage endpoint; tests swap the responder per case. */
+const httpMock = {
+  calls: 0,
+  respond: (): Response => Response.json({}, { status: 404 }),
+};
+const TestHttpClientLive = Layer.succeed(
+  HttpClient.HttpClient,
+  HttpClient.make((request) => {
+    httpMock.calls += 1;
+    return Effect.succeed(HttpClientResponse.fromWeb(request, httpMock.respond()));
+  }),
+);
 
 const testLayer = Layer.succeed(OpenCodeRuntime, OpenCodeRuntimeTestDouble).pipe(
   Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
   Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(TestHttpClientLive),
 );
 
 const makeOpenCodeSettings = (overrides?: Partial<OpenCodeSettings>): OpenCodeSettings =>
@@ -294,6 +311,60 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
         agentDescriptor.options.find((option) => option.isDefault === true)?.id,
         "build",
       );
+    }),
+  );
+
+  it.effect("reads Zen windows only when OpenCode's own provider is connected", () =>
+    Effect.gen(function* () {
+      const inventory = (connected: string[]) => ({
+        providerList: { connected, all: [], default: {} },
+        agents: [],
+        skills: [],
+      });
+      httpMock.respond = () =>
+        Response.json({
+          usage: {
+            rolling: { status: "ok", percent: 12, resetsAt: "2026-08-18T11:52:51.022Z" },
+            weekly: { status: "ok", percent: 7, resetsAt: "2026-08-24T00:00:00.022Z" },
+          },
+        });
+      // The ambient key stands in for the CLI's auth.json; the file is never read.
+      const environment = { ...process.env, OPENCODE_API_KEY: "zen-key" };
+
+      runtimeMock.state.inventory = inventory(["openai"]);
+      const passThrough = yield* checkProvider(makeOpenCodeSettings(), undefined, environment);
+      NodeAssert.equal(passThrough.usageLimits, undefined);
+      NodeAssert.equal(httpMock.calls, 0);
+
+      runtimeMock.state.inventory = inventory(["opencode"]);
+      const zen = yield* checkProvider(makeOpenCodeSettings(), undefined, environment);
+      NodeAssert.equal(httpMock.calls, 1);
+      NodeAssert.deepEqual(zen.usageLimits?.windows, [
+        {
+          id: "rolling",
+          kind: "session",
+          label: "Session",
+          windowDurationMins: 300,
+          usedPercent: 12,
+          resetsAt: "2026-08-18T11:52:51.022Z",
+        },
+        {
+          id: "weekly",
+          kind: "weekly",
+          label: "Weekly",
+          windowDurationMins: 10_080,
+          usedPercent: 7,
+          resetsAt: "2026-08-24T00:00:00.022Z",
+        },
+      ]);
+
+      httpMock.respond = () =>
+        Response.json(
+          { type: "error", error: { type: "EntitlementError", message: "Go required." } },
+          { status: 403 },
+        );
+      const credits = yield* checkProvider(makeOpenCodeSettings(), undefined, environment);
+      NodeAssert.equal(credits.usageLimits?.unavailable?.reason, "unsupported");
     }),
   );
 
